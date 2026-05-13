@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>RunCmd</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#222;font-size:15px}
+.wrap{padding:14px;max-width:960px;margin:0 auto}
+h1{font-size:1.25rem;font-weight:700;margin-bottom:12px;letter-spacing:.5px}
+.bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+button{cursor:pointer;border:none;border-radius:5px;padding:7px 15px;font-size:14px;font-family:inherit;transition:opacity .15s}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:active:not(:disabled){opacity:.75}
+.p{background:#1677ff;color:#fff}
+.g{background:#52c41a;color:#fff}
+.r{background:#ff4d4f;color:#fff}
+.d{background:#e4e4e4;color:#333}
+.sm{padding:4px 10px;font-size:13px}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th{background:#fafafa;font-weight:600;font-size:13px}
+th,td{padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:left;font-size:14px;word-break:break-all}
+th:first-child,td:first-child{width:28%}
+th:last-child,td:last-child{width:36%}
+.tcmd{font-family:monospace;font-size:13px}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.46);display:flex;align-items:center;justify-content:center;z-index:99;padding:12px}
+.dlg{background:#fff;border-radius:10px;padding:20px;width:100%;max-width:490px;max-height:92vh;overflow-y:auto}
+.dlg h3{font-size:1.05rem;margin-bottom:14px}
+.f{margin-bottom:12px}
+.f label{display:block;font-size:12px;color:#888;margin-bottom:3px}
+.f input,.f textarea{width:100%;border:1px solid #d9d9d9;border-radius:5px;padding:8px 10px;font-size:14px;font-family:inherit;outline:none;resize:vertical}
+.f input:focus,.f textarea:focus{border-color:#1677ff;box-shadow:0 0 0 2px rgba(22,119,255,.1)}
+.hint{font-size:11px;color:#aaa;margin-top:3px}
+.rlist{max-height:150px;overflow-y:auto;border:1px solid #e8e8e8;border-radius:5px;padding:4px 8px}
+.ri{display:flex;align-items:center;gap:7px;padding:5px 0;cursor:pointer;font-size:14px}
+.ri input{margin:0;cursor:pointer;width:15px;height:15px}
+.preview{background:#1e1e1e;color:#d4d4d4;border-radius:5px;padding:8px 11px;font-family:monospace;font-size:13px;word-break:break-all;margin:4px 0}
+.result{background:#1a1a1a;color:#e0e0e0;border-radius:6px;padding:12px;font-family:monospace;font-size:13px;white-space:pre-wrap;word-break:break-all;max-height:280px;overflow-y:auto;margin-top:8px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.ok{color:#52c41a;font-size:13px;margin-top:6px}
+.er{color:#ff4d4f;font-size:13px;margin-top:6px}
+.empty{text-align:center;color:#bbb;padding:28px}
+@media(max-width:480px){
+  body{font-size:16px}
+  th,td{font-size:13px;padding:8px 8px}
+  .dlg{padding:16px}
+  button{font-size:15px;padding:8px 14px}
+  .sm{font-size:14px;padding:6px 10px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="wrap">
+
+  <h1>⚡ RunCmd</h1>
+
+  <div class="bar">
+    <button class="d" @click="load">⟳ 刷新</button>
+    <button class="p" @click="openAdd">＋ 添加</button>
+    <button :class="showDel2 ? 'r' : 'd'" @click="showDel2=!showDel2">🗑 删除</button>
+    <button class="d" @click="openPubkey">🔑 公钥</button>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>名称</th><th>命令模板</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        <tr v-if="!list.length"><td colspan="5" class="empty">暂无数据，点击「添加」创建第一条命令</td></tr>
+        <tr v-for="c in list" :key="c.id">
+          <td>{{ c.name }}</td>
+          <td class="tcmd">{{ c.cmd_template }}</td>
+          <td>
+            <div class="acts">
+              <button class="p sm" @click="openEdit(c)">编辑</button>
+              <button v-if="showDel2" class="r sm" :disabled="!!delCD[c.id]" @click="openDel(c)">删除</button>
+              <button class="g sm" :disabled="!!runCD[c.id]" @click="openRun(c)">运行</button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- wrap -->
+
+<!-- ── 添加/编辑 ─────────────────────────────────── -->
+<div class="ov" v-if="showForm" @click.self="showForm=false">
+  <div class="dlg">
+    <h3>{{ form.id ? '编辑命令' : '添加命令' }}</h3>
+    <div class="f">
+      <label>名称</label>
+      <input v-model="form.name" placeholder="给这条命令起个名字" />
+    </div>
+    <div class="f">
+      <label>命令模板</label>
+      <input v-model="form.cmd_template" placeholder="示例: ping {0} -c {1}" />
+      <div class="hint">占位符：<b>{0}</b> 由列表1单选替换，<b>{1}</b> 由列表2单选替换</div>
+    </div>
+    <div class="f">
+      <label>列表1 — 每行一条，运行时单选替换 {0}</label>
+      <textarea v-model="form.list1" rows="4" placeholder="192.168.1.1&#10;192.168.1.2&#10;example.com"></textarea>
+    </div>
+    <div class="f">
+      <label>列表2 — 每行一条，运行时单选替换 {1}</label>
+      <textarea v-model="form.list2" rows="4" placeholder="3&#10;5&#10;10"></textarea>
+    </div>
+    <div class="btns">
+      <button class="p" @click="submitForm">保存</button>
+      <button class="d" @click="showForm=false">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 删除确认 ──────────────────────────────────── -->
+<div class="ov" v-if="showDel" @click.self="showDel=false">
+  <div class="dlg">
+    <h3>确认删除</h3>
+    <p style="margin:10px 0;font-size:15px">确定删除 <b>「{{ delItem?.name }}」</b>？此操作不可恢复。</p>
+    <div class="btns">
+      <button class="r" @click="doDel">确认删除</button>
+      <button class="d" @click="showDel=false">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 运行 ─────────────────────────────────────── -->
+<div class="ov" v-if="showRun" @click.self="showRun=false">
+  <div class="dlg">
+    <h3>运行：{{ runItem.name }}</h3>
+    <div class="f">
+      <label>实时预览命令</label>
+      <div class="preview">{{ previewCmd }}</div>
+    </div>
+    <div class="f" v-if="rList1.length">
+      <label>选择参数1（替换 {0}）</label>
+      <div class="rlist">
+        <label class="ri" v-for="it in rList1" :key="it">
+          <input type="radio" :value="it" v-model="sel1"> {{ it }}
+        </label>
+      </div>
+    </div>
+    <div class="f" v-if="rList2.length">
+      <label>选择参数2（替换 {1}）</label>
+      <div class="rlist">
+        <label class="ri" v-for="it in rList2" :key="it">
+          <input type="radio" :value="it" v-model="sel2"> {{ it }}
+        </label>
+      </div>
+    </div>
+    <div class="btns">
+      <button class="g" @click="doRun">✓ 确认运行</button>
+      <button class="d" @click="showRun=false">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 运行结果 ──────────────────────────────────── -->
+<div class="ov" v-if="showResult" @click.self="showResult=false">
+  <div class="dlg">
+    <h3>运行结果</h3>
+    <div class="f">
+      <label>执行命令</label>
+      <div class="preview">{{ result.cmd }}</div>
+    </div>
+    <div class="result">{{ result.output || '（无输出）' }}</div>
+    <div class="ok" v-if="result.ok">✓ 执行成功</div>
+    <div class="er" v-if="!result.ok">✗ {{ result.error }}</div>
+    <div class="btns">
+      <button class="d" @click="showResult=false">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 公钥 ─────────────────────────────────────────── -->
+<div class="ov" v-if="showPubkey" @click.self="showPubkey=false">
+  <div class="dlg">
+    <h3>SSH 公钥</h3>
+    <div class="f">
+      <label>将以下公钥追加到目标主机的 ~/.ssh/authorized_keys</label>
+      <textarea readonly rows="6" style="font-family:monospace;font-size:12px;word-break:break-all" @click="$event.target.select()">{{ pubkey }}</textarea>
+    </div>
+    <div class="btns">
+      <button class="d" @click="showPubkey=false">关闭</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- app -->
+
+<script>
+const { createApp, ref, reactive, computed } = Vue
+
+createApp({
+  setup() {
+    const API = '/api'
+
+    // ── state ──────────────────────────────────────
+    const list      = ref([])
+    const showForm   = ref(false)
+    const showDel    = ref(false)
+    const showDel2   = ref(false)
+    const showRun    = ref(false)
+    const showResult = ref(false)
+    const showPubkey = ref(false)
+    const pubkey     = ref('')
+
+    const form    = reactive({ id:0, name:'', cmd_template:'', list1:'', list2:'' })
+    const delItem = ref(null)
+    const runItem = ref({})
+    const sel1    = ref('')
+    const sel2    = ref('')
+    const result  = reactive({ cmd:'', output:'', error:'', ok:true })
+
+    // cooldown maps (id -> true while cooling)
+    const delCD = reactive({})
+    const runCD = reactive({})
+
+    // ── computed ───────────────────────────────────
+    const rList1 = computed(() => lines(runItem.value.list1 || ''))
+    const rList2 = computed(() => lines(runItem.value.list2 || ''))
+
+    function stripComment(s) {
+      const i = s.indexOf('#')
+      return i >= 0 ? s.slice(0, i).trim() : s.trim()
+    }
+
+    const previewCmd = computed(() => {
+      let c = runItem.value.cmd_template || ''
+      c = c.replace('{0}', sel1.value ? stripComment(sel1.value) : '{0}')
+      c = c.replace('{1}', sel2.value ? stripComment(sel2.value) : '{1}')
+      return c
+    })
+
+    // ── helpers ────────────────────────────────────
+    function lines(s) {
+      return s.split('\n').map(l => l.trim()).filter(Boolean)
+    }
+    function countLines(s) { return lines(s).length }
+
+    function cooldown(map, id, ms = 2500) {
+      map[id] = true
+      setTimeout(() => { delete map[id] }, ms)
+    }
+
+    // ── data ───────────────────────────────────────
+    async function load() {
+      const r = await fetch(`${API}/commands`)
+      list.value = await r.json()
+    }
+
+    // ── form ───────────────────────────────────────
+    function openAdd() {
+      Object.assign(form, { id:0, name:'', cmd_template:'', list1:'', list2:'' })
+      showForm.value = true
+    }
+    function openEdit(c) {
+      Object.assign(form, { id:c.id, name:c.name, cmd_template:c.cmd_template, list1:c.list1, list2:c.list2 })
+      showForm.value = true
+    }
+    async function submitForm() {
+      if (!form.name.trim() || !form.cmd_template.trim()) {
+        alert('名称和命令模板不能为空')
+        return
+      }
+      const body = JSON.stringify({ name:form.name, cmd_template:form.cmd_template, list1:form.list1, list2:form.list2 })
+      const opts = { method: form.id ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body }
+      const url  = form.id ? `${API}/commands/${form.id}` : `${API}/commands`
+      const r    = await fetch(url, opts)
+      if (!r.ok) { const e = await r.json(); alert(e.error); return }
+      showForm.value = false
+      load()
+    }
+
+    // ── delete ─────────────────────────────────────
+    function openDel(c) { delItem.value = c; showDel.value = true }
+    async function doDel() {
+      const c = delItem.value
+      showDel.value = false
+      cooldown(delCD, c.id)
+      const r = await fetch(`${API}/commands/${c.id}`, { method:'DELETE' })
+      if (r.status === 429) { alert('操作太频繁，请稍后再试'); return }
+      load()
+    }
+
+    // ── run ────────────────────────────────────────
+    function openRun(c) {
+      runItem.value = c
+      sel1.value = lines(c.list1)[0] || ''
+      sel2.value = lines(c.list2)[0] || ''
+      showRun.value = true
+    }
+    async function doRun() {
+      showRun.value = false
+      const c = runItem.value
+      cooldown(runCD, c.id)
+      const r = await fetch(`${API}/commands/${c.id}/run`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ sel1:sel1.value, sel2:sel2.value })
+      })
+      if (r.status === 429) { alert('操作太频繁，请稍后再试'); return }
+      const data = await r.json()
+      Object.assign(result, { cmd:'', output:'', error:'', ok:true, ...data })
+      showResult.value = true
+    }
+
+    // ── pubkey ─────────────────────────────────────
+    async function openPubkey() {
+      const r = await fetch(`${API}/pubkey`)
+      const data = await r.json()
+      pubkey.value = r.ok ? data.pubkey : (data.error || '获取失败')
+      showPubkey.value = true
+    }
+
+    load()
+
+    return {
+      list, showForm, showDel, showDel2, showRun, showResult, showPubkey, pubkey,
+      form, delItem, runItem, sel1, sel2, rList1, rList2,
+      previewCmd, result, delCD, runCD,
+      countLines, load, openAdd, openEdit, submitForm,
+      openDel, doDel, openRun, doRun, openPubkey
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>

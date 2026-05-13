@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/meiktv/GolandProjects/**)",
+      "Read(//c/Users/meiktv/go/src/**)",
+      "Read(//c/Users/meiktv/**)"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RunCmd</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #f0f2f5; }
+  iframe { width: 100%; height: 100%; border: none; display: block; }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; color: #666; font-size: 15px; background: #f0f2f5; }
+</style>
+</head>
+<body>
+<div id="loading">正在连接服务...</div>
+<iframe id="f" src="" onload="document.getElementById('loading').style.display='none'"></iframe>
+<script>
+  document.getElementById('f').src = 'http://' + location.hostname + ':38083/';
+</script>
+</body>
+</html>

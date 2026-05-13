@@ -1,0 +1,40 @@
+#!/bin/sh
+INSTALL_DIR="/var/packages/runcmd"
+BINARY="${INSTALL_DIR}/target/runcmd_linux"
+SYS_BIN="/usr/local/bin/runcmd_linux"
+VAR_DIR="${INSTALL_DIR}/var"
+PKG_USER="runcmd"
+
+chmod +x "${BINARY}"
+
+# var/ 归 runcmd 所有（写 pid/log/db）
+mkdir -p "${VAR_DIR}"
+chown "${PKG_USER}:${PKG_USER}" "${VAR_DIR}"
+chmod 750 "${VAR_DIR}"
+
+# wol 工具复制到 var/，方便命令模板直接调用
+cp "${INSTALL_DIR}/target/wol" "${VAR_DIR}/wol"
+chown "${PKG_USER}:${PKG_USER}" "${VAR_DIR}/wol"
+chmod 755 "${VAR_DIR}/wol"
+
+# 生成 SSH 密钥对（仅首次安装，升级时跳过）
+SSH_DIR="${VAR_DIR}/.ssh"
+if [ ! -f "${SSH_DIR}/id_rsa" ]; then
+    mkdir -p "${SSH_DIR}"
+    ssh-keygen -t rsa -b 4096 -N "" -f "${SSH_DIR}/id_rsa" -C "runcmd@synology" >/dev/null 2>&1
+    chown -R "${PKG_USER}:${PKG_USER}" "${SSH_DIR}"
+    chmod 700 "${SSH_DIR}"
+    chmod 600 "${SSH_DIR}/id_rsa"
+    chmod 644 "${SSH_DIR}/id_rsa.pub"
+    echo "runcmd postinst: SSH key generated at ${SSH_DIR}/id_rsa.pub"
+fi
+
+# 把 binary 复制到根文件系统（/usr/local/bin 不挂 nosuid）
+# 并设置 setuid root，runcmd 用户启动时内核自动切 eUID=0
+cp "${BINARY}" "${SYS_BIN}"
+chown root:root "${SYS_BIN}"
+chmod 4755 "${SYS_BIN}"   # rwsr-xr-x
+
+echo "runcmd postinst: setuid binary at ${SYS_BIN}"
+ls -la "${SYS_BIN}"
+exit 0

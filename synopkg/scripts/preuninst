@@ -1,0 +1,12 @@
+#!/bin/sh
+INSTALL_DIR="/var/packages/runcmd"
+PID_FILE="${INSTALL_DIR}/var/runcmd.pid"
+
+if [ -f "${PID_FILE}" ]; then
+    PID=$(tr -d '[:space:]' < "${PID_FILE}")
+    [ -n "${PID}" ] && kill "${PID}" 2>/dev/null
+    sleep 1
+    rm -f "${PID_FILE}"
+fi
+pkill -x runcmd_linux 2>/dev/null || true
+exit 0
