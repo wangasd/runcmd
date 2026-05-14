@@ -466,8 +466,8 @@ createApp({
     }
     const previewCmd = computed(() => {
       let c = runItem.value.cmd_template || ''
-      c = c.replace('{0}', sel1.value ? stripComment(sel1.value) : '{0}')
-      c = c.replace('{1}', sel2.value ? stripComment(sel2.value) : '{1}')
+      c = c.replaceAll('{0}', sel1.value ? stripComment(sel1.value) : '{0}')
+      c = c.replaceAll('{1}', sel2.value ? stripComment(sel2.value) : '{1}')
       return c
     })
 

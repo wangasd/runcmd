@@ -11,6 +11,7 @@
 - **RSA Token 鉴权**：登录后签发内存 RSA 私钥签名的 Token，重启自动失效；支持「记住登录」（365 天 localStorage）和会话登录（1 天 sessionStorage）
 - **WoL 网络唤醒**：内置 `wol` 二进制，可直接在命令模板中调用
 - **SSH 免密登录**：安装时自动生成 RSA 4096 密钥对，公钥可在页面一键查看并分发到目标主机
+- **文件服务接口**：将文件放到 `var/return/` 目录，通过 `/api/file?file=name` 无鉴权直接访问，支持 JSON、图片、视频（Range 请求）等任意格式
 - **SQLite 持久化**：命令数据存储在 `/var/packages/runcmd/var/runcmd.db`，升级不丢失
 - **零依赖部署**：Go 单二进制 + 内嵌前端，无需 CGO，无运行时依赖
 
@@ -42,7 +43,7 @@ runcmd/
     │   ├── privilege     # 运行用户配置
     │   └── resource      # DSM 资源声明
     ├── scripts/
-    │   ├── postinst      # 安装后：生成 SSH 密钥、设置权限
+    │   ├── postinst      # 安装后：生成 SSH 密钥、创建 return/ 目录、设置权限
     │   ├── preinst       # 安装前：创建 runcmd 用户
     │   ├── preuninst     # 卸载前：停止进程
     │   └── start-stop-status
@@ -157,9 +158,10 @@ location /webman/3rdparty/runcmd/ {
 
 ### 其他
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/pubkey` | 获取 SSH RSA 公钥内容 |
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/api/pubkey` | 是 | 获取 SSH RSA 公钥内容 |
+| GET | `/api/file?file=文件名` | 否 | 服务 `var/return/` 目录中的文件 |
 
 ---
 
@@ -228,15 +230,38 @@ df -h
 
 ## 数据目录
 
-| 路径 | 内容 |
-|---|---|
-| `/var/packages/runcmd/var/runcmd.db` | SQLite 数据库（命令数据） |
-| `/var/packages/runcmd/var/totp_secret` | TOTP Base32 密钥（0600） |
-| `/var/packages/runcmd/var/.ssh/id_rsa` | SSH RSA 私钥（0600） |
-| `/var/packages/runcmd/var/.ssh/id_rsa.pub` | SSH RSA 公钥（0644） |
-| `/var/packages/runcmd/var/wol` | WoL 工具二进制 |
-| `/var/packages/runcmd/var/runcmd.pid` | 进程 PID 文件 |
-| `/var/packages/runcmd/var/runcmd.log` | 服务日志 |
+| 路径 | 权限 | 内容 |
+|---|---|---|
+| `/var/packages/runcmd/var/runcmd.db` | 640 | SQLite 数据库（命令数据） |
+| `/var/packages/runcmd/var/totp_secret` | 600 | TOTP Base32 密钥 |
+| `/var/packages/runcmd/var/return/` | 750 | 文件服务目录，放入后可通过 `/api/file?file=` 访问 |
+| `/var/packages/runcmd/var/.ssh/id_rsa` | 600 | SSH RSA 私钥 |
+| `/var/packages/runcmd/var/.ssh/id_rsa.pub` | 644 | SSH RSA 公钥 |
+| `/var/packages/runcmd/var/wol` | 755 | WoL 工具二进制 |
+| `/var/packages/runcmd/var/runcmd.pid` | — | 进程 PID 文件 |
+| `/var/packages/runcmd/var/runcmd.log` | — | 服务日志 |
+
+### 文件服务使用说明
+
+将文件放到 `return/` 目录，无需重启即可访问：
+
+```bash
+# 复制文件到服务目录
+cp /path/to/data.json /var/packages/runcmd/var/return/data.json
+
+# 通过接口访问（无需登录）
+curl http://nas:38083/api/file?file=data.json
+# 或通过 nginx 反代
+curl http://nas:5000/webman/3rdparty/runcmd/api/file?file=data.json
+```
+
+支持的场景：
+- **JSON / 文本**：直接返回内容，浏览器可直接查看
+- **图片**（jpg / png / gif / webp）：浏览器内联显示
+- **视频**（mp4 / webm）：支持 `Range` 请求，可在 `<video>` 标签中流式播放
+- **其他二进制**：触发浏览器下载
+
+安全限制：文件名不得含路径分隔符（`/` `\`）或 `..`，仅允许访问 `return/` 目录内的直接文件。
 
 ---
 

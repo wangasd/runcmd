@@ -16,6 +16,14 @@ cp "${PKG_DEST}/wol" "${VAR_DIR}/wol"
 chown "${PKG_USER}:${PKG_USER}" "${VAR_DIR}/wol"
 chmod 755 "${VAR_DIR}/wol"
 
+# return/ 目录（文件服务目录，仅首次安装）
+RETURN_DIR="${VAR_DIR}/return"
+if [ ! -d "${RETURN_DIR}" ]; then
+    mkdir -p "${RETURN_DIR}"
+    chown "${PKG_USER}:${PKG_USER}" "${RETURN_DIR}"
+    chmod 750 "${RETURN_DIR}"
+fi
+
 # SSH 密钥对（仅首次安装）
 SSH_DIR="${VAR_DIR}/.ssh"
 if [ ! -f "${SSH_DIR}/id_rsa" ]; then

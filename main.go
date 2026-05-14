@@ -246,6 +246,42 @@ func runCommand(w http.ResponseWriter, r *http.Request, id int64) {
 	writeJSON(w, resp)
 }
 
+// GET /api/file?file=name.ext → serve a file from var/return/
+// 仅允许纯文件名，禁止路径穿越（不含 / 和 ..）
+const returnDir = "/var/packages/runcmd/var/return"
+
+func apiFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, 405, "method not allowed")
+		return
+	}
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		writeErr(w, 400, "missing file parameter")
+		return
+	}
+	// 安全检查：只允许纯文件名，不含任何路径分隔符或特殊序列
+	if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") || name == "." {
+		writeErr(w, 400, "invalid file name")
+		return
+	}
+	fullPath := returnDir + "/" + name
+	f, err := os.Open(fullPath)
+	if err != nil {
+		writeErr(w, 404, "file not found")
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil || stat.IsDir() {
+		writeErr(w, 404, "file not found")
+		return
+	}
+
+	http.ServeContent(w, r, name, stat.ModTime(), f)
+}
+
 // GET /api/pubkey → return SSH public key content
 func apiPubkey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -292,6 +328,7 @@ func main() {
 	mux.HandleFunc("/api/commands", auth(apiCommands))
 	mux.HandleFunc("/api/commands/", auth(apiCommandByID))
 	mux.HandleFunc("/api/pubkey", auth(apiPubkey))
+	mux.HandleFunc("/api/file", apiFile) // 无需鉴权，文件服务
 
 	addr := "0.0.0.0:38083"
 	log.Printf("✓ RunCmd running at http://%s\n", addr)
