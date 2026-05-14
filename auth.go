@@ -48,6 +48,35 @@ func readSecret() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+// initTOTPGuard 防止初始化窗口期被抢占：
+// 若启动时 totp_secret 不存在，10 分钟后仍未配置则自动写入随机密钥。
+// 随机密钥只能通过 SSH 登录 NAS 后 cat totpSecretPath 获取，
+// 再手动录入验证器 App 完成绑定。
+func initTOTPGuard() {
+	if hasSecret() {
+		return
+	}
+	log.Printf("[security] TOTP 密钥未配置，请在 10 分钟内完成初始化")
+	go func() {
+		time.Sleep(10 * time.Minute)
+		if hasSecret() {
+			return // 用户已在窗口期内完成配置
+		}
+		raw := make([]byte, 20) // 160-bit 随机熵
+		if _, err := rand.Read(raw); err != nil {
+			log.Printf("[security] 随机 TOTP 密钥生成失败: %v", err)
+			return
+		}
+		secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
+		if err := os.WriteFile(totpSecretPath, []byte(secret+"\n"), 0600); err != nil {
+			log.Printf("[security] 随机 TOTP 密钥写入失败: %v", err)
+			return
+		}
+		log.Printf("[security] 初始化超时，已自动生成随机 TOTP 密钥")
+		log.Printf("[security] 请 SSH 登录 NAS 执行: cat %s", totpSecretPath)
+	}()
+}
+
 // ─── TOTP（RFC 4226 HOTP + RFC 6238 TOTP）───────────────────────────────────
 
 func hotp(keyBytes []byte, counter int64) string {
@@ -75,7 +104,7 @@ func verifyTOTP(secret, code string) bool {
 		return false
 	}
 	counter := time.Now().Unix() / 30
-	return hotp(keyBytes, counter) == code || hotp(keyBytes, counter-1) == code
+	return hotp(keyBytes, counter) == code || hotp(keyBytes, counter-1) == code || hotp(keyBytes, counter+1) == code
 }
 
 // ─── Token ───────────────────────────────────────────────────────────────────
@@ -187,10 +216,15 @@ func apiAuthStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"has_secret": hasSecret()})
 }
 
-// POST /api/auth/login — 无需鉴权
+// POST /api/auth/login — 无需鉴权，但全局限速（防暴力破解）
 func apiAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, 405, "method not allowed")
+		return
+	}
+	// 全局无差别限速：所有请求共享同一计数器，2s 内只允许一次尝试
+	if !allow("login") {
+		writeErr(w, 429, "操作太频繁，请稍后再试")
 		return
 	}
 	var req struct {

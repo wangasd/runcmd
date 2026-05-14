@@ -309,6 +309,7 @@ func main() {
 	defer db.Close()
 
 	initRSA()
+	initTOTPGuard()
 	initDB()
 
 	mux := http.NewServeMux()

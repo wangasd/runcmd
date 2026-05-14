@@ -22,8 +22,9 @@ case "$1" in
             exit 0
         fi
         mkdir -p "${VAR_DIR}"
+        # 安全加固：确保二进制不携带 setuid root 位
+        chmod u-s "${BINARY}" 2>/dev/null || true
         # cd 到 var/，runcmd.db 写在此处（runcmd 用户有写权限）
-        # binary 已 setuid root，子进程以 root 有效身份运行
         cd "${VAR_DIR}"
         "${BINARY}" >> "${LOG_FILE}" 2>&1 &
         echo $! > "${PID_FILE}"

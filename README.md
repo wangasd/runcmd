@@ -89,14 +89,21 @@ bash build.sh
 
 ### 配置 TOTP 密钥
 
-首次访问会跳转到「初始配置」页面：
+安装完成后服务启动，此时进入 **10 分钟初始化窗口期**：
 
-1. 在 Google Authenticator / Aegis 等 App 中选择 **手动输入密钥**
-2. 输入账户名（如 `runcmd@nas`），粘贴 Base32 格式密钥，时间步长保持 30 秒
-3. 将同一 Base32 密钥填入页面输入框，点击 **保存密钥**
-4. 跳转到登录页，输入验证器显示的 6 位码登录
+1. 打开应用，首次访问会跳转到「初始配置」页面
+2. 在 Google Authenticator / Aegis 等 App 中选择 **手动输入密钥**
+3. 输入账户名（如 `runcmd@nas`），粘贴 Base32 格式密钥，时间步长保持 30 秒
+4. 将同一 Base32 密钥填入页面输入框，点击 **保存密钥**
+5. 跳转到登录页，输入验证器显示的 6 位码登录
 
-> **密钥存储位置**：`/var/packages/runcmd/var/totp_secret`（0600 权限）
+> **10 分钟未配置的情况**：服务会自动生成一个随机 TOTP 密钥写入本地文件，封闭初始化窗口期。此时需要 SSH 登录 NAS 获取密钥并手动录入验证器 App：
+> ```bash
+> cat /var/packages/runcmd/var/totp_secret
+> ```
+> 随后在验证器 App 中手动添加，使用该 Base32 字符串作为密钥。
+
+> **密钥存储位置**：`/var/packages/runcmd/var/totp_secret`（0600 权限，仅 root 可读）
 
 ### 更新密钥
 
@@ -210,11 +217,19 @@ df -h
 ## 鉴权机制说明
 
 ```
+初始化保护：
+  服务启动 → 检测 totp_secret 是否存在
+    → 不存在：记录日志，启动 10 分钟倒计时
+         → 10 分钟内用户完成配置：正常使用
+         → 10 分钟后仍未配置：自动生成 160-bit 随机密钥写入文件，
+           窗口关闭，需 SSH 获取密钥后录入验证器 App
+
 登录流程：
   输入 6 位 TOTP 码
+    → 全局限速（2s 内仅允许一次尝试，所有 IP 共享）
     → 后端验证（当前步长 + 前一步长，共 60s 窗口）
     → 签发 Token：base64url(JSON) . base64url(RSA-PKCS1v15-SHA256 签名)
-    → 前端存储（localStorage 或 sessionStorage）
+    → 前端存储（localStorage 365天 或 sessionStorage 1天）
 
 请求流程：
   携带 X-Token 头
@@ -224,6 +239,10 @@ df -h
 
 重启影响：
   RSA 密钥对仅存内存，服务重启后所有已颁发 Token 立即失效，需重新登录。
+
+setuid 防护：
+  每次服务启动前，start-stop-status 脚本自动执行 chmod u-s
+  移除二进制的 setuid root 位，确保服务以 runcmd 用户身份运行。
 ```
 
 ---
