@@ -91,7 +91,8 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Token")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Token")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -271,6 +272,7 @@ func main() {
 	db.SetMaxOpenConns(1) // sqlite: single writer
 	defer db.Close()
 
+	initRSA()
 	initDB()
 
 	mux := http.NewServeMux()
@@ -281,9 +283,15 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(data)
 	})
-	mux.HandleFunc("/api/commands", apiCommands)
-	mux.HandleFunc("/api/commands/", apiCommandByID)
-	mux.HandleFunc("/api/pubkey", apiPubkey)
+	// ── Auth（部分无需鉴权）
+	mux.HandleFunc("/api/auth/status", apiAuthStatus)
+	mux.HandleFunc("/api/auth/login", apiAuthLogin)
+	mux.HandleFunc("/api/auth/secret", apiAuthSecret) // 条件鉴权（内部判断）
+
+	// ── 业务接口（均需鉴权）
+	mux.HandleFunc("/api/commands", auth(apiCommands))
+	mux.HandleFunc("/api/commands/", auth(apiCommandByID))
+	mux.HandleFunc("/api/pubkey", auth(apiPubkey))
 
 	addr := "0.0.0.0:38083"
 	log.Printf("✓ RunCmd running at http://%s\n", addr)

@@ -8,6 +8,7 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#222;font-size:15px}
+/* ── main layout ─────────────────────────────────── */
 .wrap{padding:14px;max-width:960px;margin:0 auto}
 h1{font-size:1.25rem;font-weight:700;margin-bottom:12px;letter-spacing:.5px}
 .bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
@@ -27,7 +28,7 @@ th:first-child,td:first-child{width:28%}
 th:last-child,td:last-child{width:36%}
 .tcmd{font-family:monospace;font-size:13px}
 .acts{display:flex;gap:6px;flex-wrap:wrap}
-/* modal */
+/* ── modal ───────────────────────────────────────── */
 .ov{position:fixed;inset:0;background:rgba(0,0,0,.46);display:flex;align-items:center;justify-content:center;z-index:99;padding:12px}
 .dlg{background:#fff;border-radius:10px;padding:20px;width:100%;max-width:490px;max-height:92vh;overflow-y:auto}
 .dlg h3{font-size:1.05rem;margin-bottom:14px}
@@ -45,18 +46,86 @@ th:last-child,td:last-child{width:36%}
 .ok{color:#52c41a;font-size:13px;margin-top:6px}
 .er{color:#ff4d4f;font-size:13px;margin-top:6px}
 .empty{text-align:center;color:#bbb;padding:28px}
+/* ── auth pages ──────────────────────────────────── */
+.auth-bg{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:#f0f2f5}
+.auth-card{background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.12);padding:32px 28px;width:100%;max-width:360px}
+.auth-card h2{font-size:1.15rem;font-weight:700;margin-bottom:22px;text-align:center;color:#111}
+.auth-card .f{margin-bottom:14px}
+.auth-card .f label{display:block;font-size:12px;color:#888;margin-bottom:4px}
+.auth-card .f input{width:100%;border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;font-size:14px;font-family:inherit;outline:none}
+.auth-card .f input:focus{border-color:#1677ff;box-shadow:0 0 0 2px rgba(22,119,255,.12)}
+.code-inp{font-size:1.8rem!important;letter-spacing:.45em;text-align:center!important;font-family:monospace!important;padding:10px 8px!important}
+.chk-row{display:flex;align-items:center;gap:9px;font-size:14px;color:#444;margin:2px 0 18px;cursor:pointer;user-select:none}
+.chk-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex-shrink:0}
+.auth-btn{width:100%;padding:11px;font-size:15px;border-radius:6px;margin-top:2px}
+.auth-err{color:#ff4d4f;font-size:13px;margin-top:10px;text-align:center;min-height:18px}
+.auth-hint{font-size:12px;color:#bbb;margin-top:14px;text-align:center;line-height:1.6}
+.auth-back{width:100%;margin-top:10px;padding:8px;font-size:14px;border-radius:6px}
+.spin{text-align:center;color:#aaa;font-size:15px;padding:20px}
 @media(max-width:480px){
   body{font-size:16px}
   th,td{font-size:13px;padding:8px 8px}
   .dlg{padding:16px}
   button{font-size:15px;padding:8px 14px}
   .sm{font-size:14px;padding:6px 10px}
+  .auth-card{padding:24px 18px}
 }
 </style>
 </head>
 <body>
 <div id="app">
-<div class="wrap">
+
+<!-- ══ 加载中 ═══════════════════════════════════════════════════════════ -->
+<div v-if="page==='loading'" class="auth-bg">
+  <div class="spin">加载中…</div>
+</div>
+
+<!-- ══ 配置 / 更新 TOTP 密钥 ══════════════════════════════════════════════ -->
+<div v-else-if="page==='setup'" class="auth-bg">
+  <div class="auth-card">
+    <h2>🔐 {{ hasSecret ? '更新 TOTP 密钥' : '初始配置' }}</h2>
+    <div class="f">
+      <label>Base32 密钥（来自验证器 App）</label>
+      <input v-model="setupSecret" placeholder="JBSWY3DPEHPK3PXP"
+             autocomplete="off" spellcheck="false"
+             @keyup.enter="doSetup" />
+    </div>
+    <div class="auth-err">{{ setupErr }}</div>
+    <button class="p auth-btn" :disabled="setupBusy || !setupSecret.trim()" @click="doSetup">
+      {{ setupBusy ? '保存中…' : '保存密钥' }}
+    </button>
+    <button v-if="hasSecret" class="d auth-back" @click="page='main'">← 返回</button>
+    <div class="auth-hint">
+      在 Google Authenticator / Aegis 等 App 中<br>
+      选择「手动输入密钥」并粘贴上方 Base32 密钥
+    </div>
+  </div>
+</div>
+
+<!-- ══ 登录（TOTP 验证）════════════════════════════════════════════════════ -->
+<div v-else-if="page==='login'" class="auth-bg">
+  <div class="auth-card">
+    <h2>⚡ RunCmd</h2>
+    <div class="f">
+      <label>验证码（6 位数字）</label>
+      <input class="code-inp" ref="codeInputEl"
+             v-model="loginCode" type="text" inputmode="numeric"
+             maxlength="6" autocomplete="one-time-code" placeholder="000000"
+             @input="onCodeInput" @keyup.enter="doLogin" />
+    </div>
+    <label class="chk-row">
+      <input type="checkbox" v-model="loginRemember" />
+      记住登录（365 天）
+    </label>
+    <button class="p auth-btn" :disabled="loginBusy || loginCode.length!==6" @click="doLogin">
+      {{ loginBusy ? '验证中…' : '登录' }}
+    </button>
+    <div class="auth-err">{{ loginErr }}</div>
+  </div>
+</div>
+
+<!-- ══ 主页面 ════════════════════════════════════════════════════════════ -->
+<div v-else class="wrap">
 
   <h1>⚡ RunCmd</h1>
 
@@ -65,6 +134,8 @@ th:last-child,td:last-child{width:36%}
     <button class="p" @click="openAdd">＋ 添加</button>
     <button :class="showDel2 ? 'r' : 'd'" @click="showDel2=!showDel2">🗑 删除</button>
     <button class="d" @click="openPubkey">🔑 公钥</button>
+    <button class="d" @click="page='setup'">🔐 密钥</button>
+    <button class="d" @click="doLogout">⎋ 退出</button>
   </div>
 
   <div class="card">
@@ -91,7 +162,7 @@ th:last-child,td:last-child{width:36%}
 
 </div><!-- wrap -->
 
-<!-- ── 添加/编辑 ─────────────────────────────────── -->
+<!-- ── 添加/编辑 ──────────────────────────────────────────────────── -->
 <div class="ov" v-if="showForm" @click.self="showForm=false">
   <div class="dlg">
     <h3>{{ form.id ? '编辑命令' : '添加命令' }}</h3>
@@ -106,7 +177,7 @@ th:last-child,td:last-child{width:36%}
     </div>
     <div class="f">
       <label>列表1 — 每行一条，运行时单选替换 {0}</label>
-      <textarea v-model="form.list1" rows="4" placeholder="192.168.1.1&#10;192.168.1.2&#10;example.com"></textarea>
+      <textarea v-model="form.list1" rows="4" placeholder="192.168.1.1&#10;192.168.1.2"></textarea>
     </div>
     <div class="f">
       <label>列表2 — 每行一条，运行时单选替换 {1}</label>
@@ -119,7 +190,7 @@ th:last-child,td:last-child{width:36%}
   </div>
 </div>
 
-<!-- ── 删除确认 ──────────────────────────────────── -->
+<!-- ── 删除确认 ────────────────────────────────────────────────── -->
 <div class="ov" v-if="showDel" @click.self="showDel=false">
   <div class="dlg">
     <h3>确认删除</h3>
@@ -131,7 +202,7 @@ th:last-child,td:last-child{width:36%}
   </div>
 </div>
 
-<!-- ── 运行 ─────────────────────────────────────── -->
+<!-- ── 运行 ──────────────────────────────────────────────────── -->
 <div class="ov" v-if="showRun" @click.self="showRun=false">
   <div class="dlg">
     <h3>运行：{{ runItem.name }}</h3>
@@ -162,7 +233,7 @@ th:last-child,td:last-child{width:36%}
   </div>
 </div>
 
-<!-- ── 运行结果 ──────────────────────────────────── -->
+<!-- ── 运行结果 ────────────────────────────────────────────────── -->
 <div class="ov" v-if="showResult" @click.self="showResult=false">
   <div class="dlg">
     <h3>运行结果</h3>
@@ -179,13 +250,14 @@ th:last-child,td:last-child{width:36%}
   </div>
 </div>
 
-<!-- ── 公钥 ─────────────────────────────────────────── -->
+<!-- ── 公钥 ──────────────────────────────────────────────────── -->
 <div class="ov" v-if="showPubkey" @click.self="showPubkey=false">
   <div class="dlg">
     <h3>SSH 公钥</h3>
     <div class="f">
       <label>将以下公钥追加到目标主机的 ~/.ssh/authorized_keys</label>
-      <textarea readonly rows="6" style="font-family:monospace;font-size:12px;word-break:break-all" @click="$event.target.select()">{{ pubkey }}</textarea>
+      <textarea readonly rows="6" style="font-family:monospace;font-size:12px;word-break:break-all"
+                @click="$event.target.select()">{{ pubkey }}</textarea>
     </div>
     <div class="btns">
       <button class="d" @click="showPubkey=false">关闭</button>
@@ -193,17 +265,180 @@ th:last-child,td:last-child{width:36%}
   </div>
 </div>
 
-</div><!-- app -->
+</div><!-- #app -->
 
 <script>
-const { createApp, ref, reactive, computed } = Vue
+const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue
 
+// ════════════════════════════════════════════════════════
+// Token 工具函数（模块级，不依赖 Vue）
+// ════════════════════════════════════════════════════════
+const TK = 'runcmd_token'
+
+function getToken()      { return localStorage.getItem(TK) || sessionStorage.getItem(TK) || '' }
+function isRemembered()  { return !!localStorage.getItem(TK) }
+function clearToken()    { localStorage.removeItem(TK); sessionStorage.removeItem(TK) }
+function saveToken(tok, remember) {
+  clearToken()
+  if (remember) localStorage.setItem(TK, tok)
+  else          sessionStorage.setItem(TK, tok)
+}
+
+// Base64url → JSON（不验证签名，只做客户端过期检测）
+function decodePayload(tok) {
+  try {
+    const b64 = tok.split('.')[0]
+    const pad = b64 + '=='.slice(0, (4 - b64.length % 4) % 4)
+    return JSON.parse(atob(pad.replace(/-/g, '+').replace(/_/g, '/')))
+  } catch { return null }
+}
+function isTokenAlive(tok) {
+  if (!tok) return false
+  const p = decodePayload(tok)
+  if (!p) return false
+  const now = Date.now() / 1000
+  return now < p.exp + 600 && now > p.iat - 600
+}
+
+// ════════════════════════════════════════════════════════
+// Vue App
+// ════════════════════════════════════════════════════════
 createApp({
   setup() {
-    const API = '/api'
+    const API = 'api'
 
-    // ── state ──────────────────────────────────────
-    const list      = ref([])
+    // ─── 页面状态 ─────────────────────────────────────
+    const page      = ref('loading')  // 'loading'|'setup'|'login'|'main'
+    const hasSecret = ref(false)
+
+    // ─── apiFetch：自动携带 token，处理 401 + 延签 ────
+    async function apiFetch(path, options = {}) {
+      const token = getToken()
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers['X-Token'] = token
+      Object.assign(headers, options.headers || {})
+
+      const resp = await fetch(API + '/' + path, { ...options, headers })
+
+      // 读取延签后的新 token
+      const newTok = resp.headers.get('X-Token')
+      if (newTok) saveToken(newTok, isRemembered())
+
+      if (resp.status === 401) {
+        clearToken()
+        page.value = 'login'
+        throw Object.assign(new Error('unauthorized'), { isAuth: true })
+      }
+      return resp
+    }
+
+    // ─── 初始化：检查 secret 状态 + token 有效性 ─────
+    async function init() {
+      try {
+        const r    = await fetch(API + '/auth/status')
+        const data = await r.json()
+        hasSecret.value = data.has_secret
+
+        if (!data.has_secret) {
+          page.value = 'setup'
+          return
+        }
+        const tok = getToken()
+        if (isTokenAlive(tok)) {
+          page.value = 'main'
+          load()
+        } else {
+          clearToken()
+          page.value = 'login'
+        }
+      } catch {
+        page.value = 'login'
+      }
+    }
+
+    // ─── Setup 页 ─────────────────────────────────────
+    const setupSecret = ref('')
+    const setupErr    = ref('')
+    const setupBusy   = ref(false)
+
+    async function doSetup() {
+      if (!setupSecret.value.trim()) return
+      setupBusy.value = true
+      setupErr.value  = ''
+      try {
+        const r    = await apiFetch('auth/secret', {
+          method: 'POST',
+          body:   JSON.stringify({ secret: setupSecret.value.trim() })
+        })
+        const data = await r.json()
+        if (!r.ok) { setupErr.value = data.error || '保存失败'; return }
+        hasSecret.value  = true
+        setupSecret.value = ''
+        // 有 token 说明是已登录状态下更新密钥，返回主页；否则去登录
+        page.value = getToken() ? 'main' : 'login'
+      } catch (e) {
+        if (!e.isAuth) setupErr.value = '请求失败，请重试'
+      } finally {
+        setupBusy.value = false
+      }
+    }
+
+    // ─── Login 页 ─────────────────────────────────────
+    const loginCode     = ref('')
+    const loginRemember = ref(false)
+    const loginErr      = ref('')
+    const loginBusy     = ref(false)
+    const codeInputEl   = ref(null)
+
+    // 输入时只保留数字，满6位自动提交
+    function onCodeInput(e) {
+      const clean = e.target.value.replace(/\D/g, '').slice(0, 6)
+      loginCode.value = clean
+      loginErr.value  = ''
+      if (clean.length === 6) doLogin()
+    }
+
+    async function doLogin() {
+      const code = loginCode.value
+      if (!/^\d{6}$/.test(code)) { loginErr.value = '请输入6位数字验证码'; return }
+      loginBusy.value = true
+      loginErr.value  = ''
+      try {
+        const r    = await fetch(API + '/auth/login', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ code, remember: loginRemember.value })
+        })
+        const data = await r.json()
+        if (!r.ok) { loginErr.value = data.error || '登录失败'; return }
+        saveToken(data.token, loginRemember.value)
+        loginCode.value = ''
+        page.value = 'main'
+        load()
+      } catch {
+        loginErr.value = '请求失败，请重试'
+      } finally {
+        loginBusy.value = false
+      }
+    }
+
+    function doLogout() {
+      clearToken()
+      loginCode.value = ''
+      loginErr.value  = ''
+      page.value = 'login'
+    }
+
+    // 切换到 login 时自动聚焦验证码输入框
+    watch(page, async (val) => {
+      if (val === 'login') {
+        await nextTick()
+        codeInputEl.value?.focus()
+      }
+    })
+
+    // ─── Main 页：原有逻辑（fetch → apiFetch）─────────
+    const list       = ref([])
     const showForm   = ref(false)
     const showDel    = ref(false)
     const showDel2   = ref(false)
@@ -219,11 +454,9 @@ createApp({
     const sel2    = ref('')
     const result  = reactive({ cmd:'', output:'', error:'', ok:true })
 
-    // cooldown maps (id -> true while cooling)
     const delCD = reactive({})
     const runCD = reactive({})
 
-    // ── computed ───────────────────────────────────
     const rList1 = computed(() => lines(runItem.value.list1 || ''))
     const rList2 = computed(() => lines(runItem.value.list2 || ''))
 
@@ -231,7 +464,6 @@ createApp({
       const i = s.indexOf('#')
       return i >= 0 ? s.slice(0, i).trim() : s.trim()
     }
-
     const previewCmd = computed(() => {
       let c = runItem.value.cmd_template || ''
       c = c.replace('{0}', sel1.value ? stripComment(sel1.value) : '{0}')
@@ -239,24 +471,20 @@ createApp({
       return c
     })
 
-    // ── helpers ────────────────────────────────────
-    function lines(s) {
-      return s.split('\n').map(l => l.trim()).filter(Boolean)
-    }
-    function countLines(s) { return lines(s).length }
+    function lines(s) { return s.split('\n').map(l => l.trim()).filter(Boolean) }
 
     function cooldown(map, id, ms = 2500) {
       map[id] = true
       setTimeout(() => { delete map[id] }, ms)
     }
 
-    // ── data ───────────────────────────────────────
     async function load() {
-      const r = await fetch(`${API}/commands`)
-      list.value = await r.json()
+      try {
+        const r = await apiFetch('commands')
+        list.value = await r.json()
+      } catch (e) { /* 401 已由 apiFetch 处理 */ }
     }
 
-    // ── form ───────────────────────────────────────
     function openAdd() {
       Object.assign(form, { id:0, name:'', cmd_template:'', list1:'', list2:'' })
       showForm.value = true
@@ -266,31 +494,29 @@ createApp({
       showForm.value = true
     }
     async function submitForm() {
-      if (!form.name.trim() || !form.cmd_template.trim()) {
-        alert('名称和命令模板不能为空')
-        return
-      }
+      if (!form.name.trim() || !form.cmd_template.trim()) { alert('名称和命令模板不能为空'); return }
       const body = JSON.stringify({ name:form.name, cmd_template:form.cmd_template, list1:form.list1, list2:form.list2 })
-      const opts = { method: form.id ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body }
-      const url  = form.id ? `${API}/commands/${form.id}` : `${API}/commands`
-      const r    = await fetch(url, opts)
-      if (!r.ok) { const e = await r.json(); alert(e.error); return }
-      showForm.value = false
-      load()
+      const path = form.id ? `commands/${form.id}` : 'commands'
+      try {
+        const r = await apiFetch(path, { method: form.id ? 'PUT' : 'POST', body })
+        if (!r.ok) { const e = await r.json(); alert(e.error); return }
+        showForm.value = false
+        load()
+      } catch (e) { if (!e.isAuth) alert('请求失败') }
     }
 
-    // ── delete ─────────────────────────────────────
     function openDel(c) { delItem.value = c; showDel.value = true }
     async function doDel() {
       const c = delItem.value
       showDel.value = false
       cooldown(delCD, c.id)
-      const r = await fetch(`${API}/commands/${c.id}`, { method:'DELETE' })
-      if (r.status === 429) { alert('操作太频繁，请稍后再试'); return }
-      load()
+      try {
+        const r = await apiFetch(`commands/${c.id}`, { method: 'DELETE' })
+        if (r.status === 429) { alert('操作太频繁，请稍后再试'); return }
+        load()
+      } catch (e) { if (!e.isAuth) alert('请求失败') }
     }
 
-    // ── run ────────────────────────────────────────
     function openRun(c) {
       runItem.value = c
       sel1.value = lines(c.list1)[0] || ''
@@ -301,32 +527,43 @@ createApp({
       showRun.value = false
       const c = runItem.value
       cooldown(runCD, c.id)
-      const r = await fetch(`${API}/commands/${c.id}/run`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ sel1:sel1.value, sel2:sel2.value })
-      })
-      if (r.status === 429) { alert('操作太频繁，请稍后再试'); return }
-      const data = await r.json()
-      Object.assign(result, { cmd:'', output:'', error:'', ok:true, ...data })
-      showResult.value = true
+      try {
+        const r = await apiFetch(`commands/${c.id}/run`, {
+          method: 'POST',
+          body:   JSON.stringify({ sel1: sel1.value, sel2: sel2.value })
+        })
+        if (r.status === 429) { alert('操作太频繁，请稍后再试'); return }
+        const data = await r.json()
+        Object.assign(result, { cmd:'', output:'', error:'', ok:true, ...data })
+        showResult.value = true
+      } catch (e) { if (!e.isAuth) alert('请求失败') }
     }
 
-    // ── pubkey ─────────────────────────────────────
     async function openPubkey() {
-      const r = await fetch(`${API}/pubkey`)
-      const data = await r.json()
-      pubkey.value = r.ok ? data.pubkey : (data.error || '获取失败')
-      showPubkey.value = true
+      try {
+        const r    = await apiFetch('pubkey')
+        const data = await r.json()
+        pubkey.value    = r.ok ? data.pubkey : (data.error || '获取失败')
+        showPubkey.value = true
+      } catch (e) { if (!e.isAuth) alert('请求失败') }
     }
 
-    load()
+    // ─── 启动 ─────────────────────────────────────────
+    onMounted(() => init())
 
     return {
+      // 页面
+      page, hasSecret,
+      // setup
+      setupSecret, setupErr, setupBusy, doSetup,
+      // login
+      loginCode, loginRemember, loginErr, loginBusy, codeInputEl,
+      onCodeInput, doLogin, doLogout,
+      // main
       list, showForm, showDel, showDel2, showRun, showResult, showPubkey, pubkey,
       form, delItem, runItem, sel1, sel2, rList1, rList2,
       previewCmd, result, delCD, runCD,
-      countLines, load, openAdd, openEdit, submitForm,
+      load, openAdd, openEdit, submitForm,
       openDel, doDel, openRun, doRun, openPubkey
     }
   }

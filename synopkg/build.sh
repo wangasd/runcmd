@@ -24,6 +24,7 @@ fi
 rm -rf "${BUILD_DIR}"
 mkdir -p \
     "${BUILD_DIR}/pkg/ui/images" \
+    "${BUILD_DIR}/pkg/nginx" \
     "${BUILD_DIR}/scripts" \
     "${BUILD_DIR}/conf" \
     "${DIST_DIR}"
@@ -37,6 +38,8 @@ chmod +x "${BUILD_DIR}/pkg/wol"
 # ui/ 放进 package 内（dsmuidir 指向此处）
 sed 's/\r//' ui/config > "${BUILD_DIR}/pkg/ui/config"
 cp ui/images/* "${BUILD_DIR}/pkg/ui/images/"
+# nginx 反代配置（postinst 会 cp 到 /etc/nginx/conf.d/）
+cp nginx/dsm.runcmd.conf "${BUILD_DIR}/pkg/nginx/dsm.runcmd.conf"
 tar -czf "${BUILD_DIR}/package.tgz" -C "${BUILD_DIR}/pkg" .
 
 # ── SPK 顶层文件 ─────────────────────────────────────────────────────

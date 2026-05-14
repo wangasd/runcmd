@@ -5,8 +5,7 @@
             "desc": "Shell命令Web管理工具",
             "icon": "images/icon_{0}.png",
             "type": "url",
-            "protocol": "http",
-            "port": "38083",
+            "url": "/webman/3rdparty/runcmd/",
             "allUsers": false
         }
     }
