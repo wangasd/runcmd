@@ -163,7 +163,7 @@ th:last-child,td:last-child{width:36%}
 </div><!-- wrap -->
 
 <!-- ── 添加/编辑 ──────────────────────────────────────────────────── -->
-<div class="ov" v-if="showForm" @click.self="showForm=false">
+<div class="ov" v-if="showForm">
   <div class="dlg">
     <h3>{{ form.id ? '编辑命令' : '添加命令' }}</h3>
     <div class="f">
@@ -172,16 +172,20 @@ th:last-child,td:last-child{width:36%}
     </div>
     <div class="f">
       <label>命令模板</label>
-      <input v-model="form.cmd_template" placeholder="示例: ping {0} -c {1}" />
-      <div class="hint">占位符：<b>{0}</b> 由列表1单选替换，<b>{1}</b> 由列表2单选替换</div>
+      <input v-model="form.cmd_template" placeholder="示例: ssh {0}@{1} -p %0 # {0}=用户 {1}=主机 %0=端口" />
+      <div class="hint">
+        第一组 <b>{0}</b> <b>{1}</b> <b>{2}</b>… 由列表1选中行替换；
+        第二组 <b>%0</b> <b>%1</b> <b>%2</b>… 由列表2选中行替换；
+        同一占位符出现多次全部替换
+      </div>
     </div>
     <div class="f">
-      <label>列表1 — 每行一条，运行时单选替换 {0}</label>
-      <textarea v-model="form.list1" rows="4" placeholder="192.168.1.1&#10;192.168.1.2"></textarea>
+      <label>列表1 — 每行一条，行内用 <b>|</b> 分隔多个值，依次替换 {0} {1} {2}…</label>
+      <textarea v-model="form.list1" rows="4" placeholder="192.168.1.1|22|root  # 生产服务器&#10;192.168.1.2|8022|admin  # 测试服务器"></textarea>
     </div>
     <div class="f">
-      <label>列表2 — 每行一条，运行时单选替换 {1}</label>
-      <textarea v-model="form.list2" rows="4" placeholder="3&#10;5&#10;10"></textarea>
+      <label>列表2 — 每行一条，行内用 <b>|</b> 分隔多个值，依次替换 %0 %1 %2…</label>
+      <textarea v-model="form.list2" rows="4" placeholder="nginx|/etc/nginx  # nginx配置&#10;redis|/etc/redis  # redis配置"></textarea>
     </div>
     <div class="btns">
       <button class="p" @click="submitForm">保存</button>
@@ -191,7 +195,7 @@ th:last-child,td:last-child{width:36%}
 </div>
 
 <!-- ── 删除确认 ────────────────────────────────────────────────── -->
-<div class="ov" v-if="showDel" @click.self="showDel=false">
+<div class="ov" v-if="showDel">
   <div class="dlg">
     <h3>确认删除</h3>
     <p style="margin:10px 0;font-size:15px">确定删除 <b>「{{ delItem?.name }}」</b>？此操作不可恢复。</p>
@@ -203,7 +207,7 @@ th:last-child,td:last-child{width:36%}
 </div>
 
 <!-- ── 运行 ──────────────────────────────────────────────────── -->
-<div class="ov" v-if="showRun" @click.self="showRun=false">
+<div class="ov" v-if="showRun">
   <div class="dlg">
     <h3>运行：{{ runItem.name }}</h3>
     <div class="f">
@@ -211,7 +215,7 @@ th:last-child,td:last-child{width:36%}
       <div class="preview">{{ previewCmd }}</div>
     </div>
     <div class="f" v-if="rList1.length">
-      <label>选择参数1（替换 {0}）</label>
+      <label>参数组1（选中行按 | 分割，依次替换 {0} {1} {2}…）</label>
       <div class="rlist">
         <label class="ri" v-for="it in rList1" :key="it">
           <input type="radio" :value="it" v-model="sel1"> {{ it }}
@@ -219,7 +223,7 @@ th:last-child,td:last-child{width:36%}
       </div>
     </div>
     <div class="f" v-if="rList2.length">
-      <label>选择参数2（替换 {1}）</label>
+      <label>参数组2（选中行按 | 分割，依次替换 %0 %1 %2…）</label>
       <div class="rlist">
         <label class="ri" v-for="it in rList2" :key="it">
           <input type="radio" :value="it" v-model="sel2"> {{ it }}
@@ -234,7 +238,7 @@ th:last-child,td:last-child{width:36%}
 </div>
 
 <!-- ── 运行结果 ────────────────────────────────────────────────── -->
-<div class="ov" v-if="showResult" @click.self="showResult=false">
+<div class="ov" v-if="showResult">
   <div class="dlg">
     <h3>运行结果</h3>
     <div class="f">
@@ -251,7 +255,7 @@ th:last-child,td:last-child{width:36%}
 </div>
 
 <!-- ── 公钥 ──────────────────────────────────────────────────── -->
-<div class="ov" v-if="showPubkey" @click.self="showPubkey=false">
+<div class="ov" v-if="showPubkey">
   <div class="dlg">
     <h3>SSH 公钥</h3>
     <div class="f">
@@ -454,24 +458,36 @@ createApp({
     const sel2    = ref('')
     const result  = reactive({ cmd:'', output:'', error:'', ok:true })
 
-    const delCD = reactive({})
-    const runCD = reactive({})
-
     const rList1 = computed(() => lines(runItem.value.list1 || ''))
     const rList2 = computed(() => lines(runItem.value.list2 || ''))
+
+    const delCD = reactive({})
+    const runCD = reactive({})
 
     function stripComment(s) {
       const i = s.indexOf('#')
       return i >= 0 ? s.slice(0, i).trim() : s.trim()
     }
+
+    // 选中行先整体 stripComment，再按 | 拆出多个值，依次替换 {n} / %n
+    function expandSel(line) {
+      return stripComment(line).split('|').map(v => v.trim())
+    }
+
     const previewCmd = computed(() => {
       let c = runItem.value.cmd_template || ''
-      c = c.replaceAll('{0}', sel1.value ? stripComment(sel1.value) : '{0}')
-      c = c.replaceAll('{1}', sel2.value ? stripComment(sel2.value) : '{1}')
+      if (sel1.value) {
+        expandSel(sel1.value).forEach((v, i) => {
+          c = c.replaceAll('{' + i + '}', v !== '' ? v : '{' + i + '}')
+        })
+      }
+      if (sel2.value) {
+        expandSel(sel2.value).forEach((v, i) => {
+          c = c.replaceAll('%' + i, v !== '' ? v : '%' + i)
+        })
+      }
       return c
     })
-
-    function lines(s) { return s.split('\n').map(l => l.trim()).filter(Boolean) }
 
     function cooldown(map, id, ms = 2500) {
       map[id] = true
@@ -516,6 +532,8 @@ createApp({
         load()
       } catch (e) { if (!e.isAuth) alert('请求失败') }
     }
+
+    function lines(s) { return s.split('\n').map(l => l.trim()).filter(Boolean) }
 
     function openRun(c) {
       runItem.value = c

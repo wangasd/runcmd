@@ -227,9 +227,20 @@ func runCommand(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 
-	// replace placeholders（strip # comments from selections first）
-	assembled := strings.ReplaceAll(tmpl, "{0}", stripComment(req.Sel1))
-	assembled = strings.ReplaceAll(assembled, "{1}", stripComment(req.Sel2))
+	// 第一组：sel1 按 | 分割，依次替换 {0} {1} {2} …
+	// 第二组：sel2 按 | 分割，依次替换 %0 %1 %2 …
+	// 每个分段先 strip # 注释再替换，重复占位符全部替换
+	assembled := tmpl
+	if req.Sel1 != "" {
+		for i, v := range strings.Split(req.Sel1, "|") {
+			assembled = strings.ReplaceAll(assembled, fmt.Sprintf("{%d}", i), stripComment(v))
+		}
+	}
+	if req.Sel2 != "" {
+		for i, v := range strings.Split(req.Sel2, "|") {
+			assembled = strings.ReplaceAll(assembled, fmt.Sprintf("%%%d", i), stripComment(v))
+		}
+	}
 
 	log.Printf("[run] id=%d cmd=%q", id, assembled)
 
