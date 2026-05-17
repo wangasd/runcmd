@@ -84,14 +84,23 @@ th:last-child,td:last-child{width:36%}
 <div v-else-if="page==='setup'" class="auth-bg">
   <div class="auth-card">
     <h2>🔐 {{ hasSecret ? '更新 TOTP 密钥' : '初始配置' }}</h2>
+    <div v-if="hasSecret" class="f">
+      <label>当前验证码（6 位数字）</label>
+      <input class="code-inp" v-model="setupCode" type="text" inputmode="numeric"
+             maxlength="6" autocomplete="one-time-code" placeholder="000000"
+             @input="setupCode=setupCode.replace(/\D/g,'').slice(0,6)"
+             @keyup.enter="doSetup" />
+    </div>
     <div class="f">
-      <label>Base32 密钥（来自验证器 App）</label>
+      <label>新 Base32 密钥（来自验证器 App）</label>
       <input v-model="setupSecret" placeholder="JBSWY3DPEHPK3PXP"
              autocomplete="off" spellcheck="false"
              @keyup.enter="doSetup" />
     </div>
     <div class="auth-err">{{ setupErr }}</div>
-    <button class="p auth-btn" :disabled="setupBusy || !setupSecret.trim()" @click="doSetup">
+    <button class="p auth-btn"
+            :disabled="setupBusy || !setupSecret.trim() || (hasSecret && setupCode.length!==6)"
+            @click="doSetup">
       {{ setupBusy ? '保存中…' : '保存密钥' }}
     </button>
     <button v-if="hasSecret" class="d auth-back" @click="page='main'">← 返回</button>
@@ -362,22 +371,27 @@ createApp({
 
     // ─── Setup 页 ─────────────────────────────────────
     const setupSecret = ref('')
+    const setupCode   = ref('')
     const setupErr    = ref('')
     const setupBusy   = ref(false)
 
     async function doSetup() {
       if (!setupSecret.value.trim()) return
+      if (hasSecret.value && setupCode.value.length !== 6) return
       setupBusy.value = true
       setupErr.value  = ''
       try {
+        const body = { secret: setupSecret.value.trim() }
+        if (hasSecret.value) body.code = setupCode.value
         const r    = await apiFetch('auth/secret', {
           method: 'POST',
-          body:   JSON.stringify({ secret: setupSecret.value.trim() })
+          body:   JSON.stringify(body)
         })
         const data = await r.json()
         if (!r.ok) { setupErr.value = data.error || '保存失败'; return }
-        hasSecret.value  = true
+        hasSecret.value   = true
         setupSecret.value = ''
+        setupCode.value   = ''
         // 有 token 说明是已登录状态下更新密钥，返回主页；否则去登录
         page.value = getToken() ? 'main' : 'login'
       } catch (e) {
@@ -573,7 +587,7 @@ createApp({
       // 页面
       page, hasSecret,
       // setup
-      setupSecret, setupErr, setupBusy, doSetup,
+      setupSecret, setupCode, setupErr, setupBusy, doSetup,
       // login
       loginCode, loginRemember, loginErr, loginBusy, codeInputEl,
       onCodeInput, doLogin, doLogout,

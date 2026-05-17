@@ -256,7 +256,7 @@ func apiAuthLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"token": token})
 }
 
-// POST /api/auth/secret — 无 secret 时不鉴权；有 secret 时需鉴权
+// POST /api/auth/secret — 无 secret 时不鉴权；有 secret 时需鉴权 + 旧 TOTP 验证
 func apiAuthSecret(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, 405, "method not allowed")
@@ -280,6 +280,7 @@ func apiAuthSecret(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Secret string `json:"secret"`
+		Code   string `json:"code"` // 更新时需提供当前 TOTP 验证码
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, "bad json")
@@ -290,7 +291,24 @@ func apiAuthSecret(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "密钥不能为空")
 		return
 	}
-	// 校验是否合法 base32
+	// 有旧密钥时，必须用当前 TOTP 码二次验证才允许替换
+	if hasSecret() {
+		if len(req.Code) != 6 {
+			writeErr(w, 400, "请提供当前验证器的 6 位验证码")
+			return
+		}
+		oldSecret, err := readSecret()
+		if err != nil {
+			writeErr(w, 500, "读取密钥失败")
+			return
+		}
+		if !verifyTOTP(oldSecret, req.Code) {
+			writeErr(w, 401, "验证码错误，密钥未更新")
+			return
+		}
+	}
+
+	// 校验新密钥是否合法 base32
 	padded := secret
 	if pad := len(padded) % 8; pad != 0 {
 		padded += strings.Repeat("=", 8-pad)
