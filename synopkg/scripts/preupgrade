@@ -1,0 +1,3 @@
+#!/bin/sh
+# DSM requires this hook when upgrading an installed package.
+exit 0

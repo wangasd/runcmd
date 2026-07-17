@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,10 +21,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed static/index.html
+//go:embed static/index.html static/vue.global.prod.js
 var staticFS embed.FS
 
 var db *sql.DB
+
+var (
+	ipDir = "/var/packages/runcmd/var/ip"
+	ipMu  sync.Mutex
+)
+
+var hostnameRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
 
 // ─── rate limiter ────────────────────────────────────────────────────────────
 
@@ -293,6 +304,170 @@ func apiFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, stat.ModTime(), f)
 }
 
+// clientIP returns the original client address when the service is behind the
+// Synology reverse proxy. Every candidate is parsed before it is used in a file name.
+func clientIP(r *http.Request) (string, bool) {
+	candidates := []string{}
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		candidates = append(candidates, strings.Split(forwarded, ",")...)
+	}
+	candidates = append(candidates, r.Header.Get("X-Real-IP"))
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		candidates = append(candidates, host)
+	} else {
+		candidates = append(candidates, r.RemoteAddr)
+	}
+	for _, candidate := range candidates {
+		if ip := net.ParseIP(strings.TrimSpace(candidate)); ip != nil {
+			return ip.String(), true
+		}
+	}
+	return "", false
+}
+
+func validHostname(hostname string) bool {
+	if !hostnameRE.MatchString(hostname) || strings.Contains(hostname, "..") {
+		return false
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	return true
+}
+
+func parseLocalIPs(raw string) ([]string, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > 32 {
+		return nil, false
+	}
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		ip := net.ParseIP(strings.TrimSpace(part))
+		if ip == nil {
+			return nil, false
+		}
+		normalized := ip.String()
+		if !seen[normalized] {
+			seen[normalized] = true
+			result = append(result, normalized)
+		}
+	}
+	return result, len(result) > 0
+}
+
+// GET /api/host/report?hostname=nas01&local_ip=192.168.1.2,10.0.0.2
+func apiHostReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	hostname := strings.TrimSpace(r.URL.Query().Get("hostname"))
+	if !validHostname(hostname) {
+		writeErr(w, http.StatusBadRequest, "invalid hostname")
+		return
+	}
+	rawLocalIP := r.URL.Query().Get("local_ip")
+	if rawLocalIP == "" { // compatibility for clients that use localip
+		rawLocalIP = r.URL.Query().Get("localip")
+	}
+	localIPs, ok := parseLocalIPs(rawLocalIP)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid local_ip")
+		return
+	}
+	externalIP, ok := clientIP(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid client ip")
+		return
+	}
+	filename := strings.Join(append([]string{hostname, externalIP}, localIPs...), "-")
+	if len(filename) > 240 {
+		writeErr(w, http.StatusBadRequest, "host data too long")
+		return
+	}
+
+	ipMu.Lock()
+	defer ipMu.Unlock()
+	if err := os.MkdirAll(ipDir, 0750); err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot create ip directory")
+		return
+	}
+	entries, err := os.ReadDir(ipDir)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot read ip directory")
+		return
+	}
+	now := time.Now()
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), hostname+"-") {
+			_ = os.Remove(filepath.Join(ipDir, entry.Name()))
+		}
+	}
+	path := filepath.Join(ipDir, filename)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0640)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot create host file")
+		return
+	}
+	_ = file.Close()
+	if err := os.Chtimes(path, now, now); err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot touch host file")
+		return
+	}
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr == nil && !entry.IsDir() && now.Sub(info.ModTime()) > 30*24*time.Hour {
+			_ = os.Remove(filepath.Join(ipDir, entry.Name()))
+		}
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "filename": filename})
+}
+
+// GET /api/hosts returns file names ordered by modification time, newest first.
+func apiHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	type hostFile struct {
+		name    string
+		modTime time.Time
+	}
+	ipMu.Lock()
+	defer ipMu.Unlock()
+	entries, err := os.ReadDir(ipDir)
+	if os.IsNotExist(err) {
+		writeJSON(w, []string{})
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot read ip directory")
+		return
+	}
+	files := make([]hostFile, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil {
+			files = append(files, hostFile{entry.Name(), info.ModTime()})
+		}
+	}
+	sort.SliceStable(files, func(i, j int) bool { return files[i].modTime.After(files[j].modTime) })
+	names := make([]string, len(files))
+	for i := range files {
+		names[i] = files[i].name
+	}
+	writeJSON(w, names)
+}
+
 // GET /api/pubkey → return SSH public key content
 func apiPubkey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -324,6 +499,22 @@ func main() {
 	initDB()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/vue-runtime", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		data, err := staticFS.ReadFile("static/vue.global.prod.js")
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "file not found")
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(data)
+		}
+	})
 
 	// serve embedded index.html for all non-api routes
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -340,7 +531,10 @@ func main() {
 	mux.HandleFunc("/api/commands", auth(apiCommands))
 	mux.HandleFunc("/api/commands/", auth(apiCommandByID))
 	mux.HandleFunc("/api/pubkey", auth(apiPubkey))
-	mux.HandleFunc("/api/file", apiFile) // 无需鉴权，文件服务
+	// ── 业务接口（无需鉴权）
+	mux.HandleFunc("/api/file", apiFile) // 无需鉴权，文件服务,返回json文件模拟api json接口
+	mux.HandleFunc("/api/host/report", apiHostReport)
+	mux.HandleFunc("/api/hosts", apiHosts)
 
 	addr := "0.0.0.0:38083"
 	log.Printf("✓ RunCmd running at http://%s\n", addr)

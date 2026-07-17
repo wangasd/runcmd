@@ -2,13 +2,18 @@
 set -e
 
 PKG_NAME="runcmd"
-VERSION="1.0.0-0001"
+VERSION="$(sed -n 's/^version="\([^"]*\)"/\1/p' INFO | tr -d '\r')"
 BINARY="../runcmd_linux"
 WOL="../wol"
 DIST_DIR="./dist"
 BUILD_DIR="./.build"
 
 echo "==> Building ${PKG_NAME}-${VERSION}.spk ..."
+
+if [ -z "${VERSION}" ]; then
+    echo "ERROR: 无法从 INFO 读取 version"
+    exit 1
+fi
 
 if [ ! -f "${BINARY}" ]; then
     echo "ERROR: ${BINARY} 不存在，请先编译："

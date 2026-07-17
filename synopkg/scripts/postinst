@@ -24,6 +24,12 @@ if [ ! -d "${RETURN_DIR}" ]; then
     chmod 750 "${RETURN_DIR}"
 fi
 
+# 主机 IP 上报目录
+IP_DIR="${VAR_DIR}/ip"
+mkdir -p "${IP_DIR}"
+chown "${PKG_USER}:${PKG_USER}" "${IP_DIR}"
+chmod 750 "${IP_DIR}"
+
 # SSH 密钥对（仅首次安装）
 SSH_DIR="${VAR_DIR}/.ssh"
 if [ ! -f "${SSH_DIR}/id_rsa" ]; then

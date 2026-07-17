@@ -12,8 +12,10 @@
 - **WoL 网络唤醒**：内置 `wol` 二进制，可直接在命令模板中调用
 - **SSH 免密登录**：安装时自动生成 RSA 4096 密钥对，公钥可在页面一键查看并分发到目标主机
 - **文件服务接口**：将文件放到 `var/return/` 目录，通过 `/api/file?file=name` 无鉴权直接访问，支持 JSON、图片、视频（Range 请求）等任意格式
+- **主机 IP 上报**：客户端可免鉴权上报 hostname 与一个或多个局域网 IP，服务端自动记录访问来源的外网 IP
+- **主机状态页面**：点击首页「主机」查看主机名、外网 IP 和局域网 IP，按最近上报时间倒序排列
 - **SQLite 持久化**：命令数据存储在 `/var/packages/runcmd/var/runcmd.db`，升级不丢失
-- **零依赖部署**：Go 单二进制 + 内嵌前端，无需 CGO，无运行时依赖
+- **零依赖部署**：Go 单二进制 + 内嵌 HTML/Vue 前端，无需公网 CDN、CGO 或其他运行时依赖
 
 ---
 
@@ -22,7 +24,7 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Go 1.21+，`net/http`，`modernc.org/sqlite`（纯 Go SQLite） |
-| 前端 | Vue 3（CDN，无构建步骤），原生 CSS |
+| 前端 | Vue 3.5.40（本地内嵌，无构建步骤），原生 CSS |
 | 认证 | TOTP（RFC 4226/6238 手动实现），RSA-PKCS1v15 签名 Token |
 | 打包 | Synology SPK 格式，DSM 7.0+ |
 
@@ -35,7 +37,8 @@ runcmd/
 ├── main.go               # HTTP 服务、路由、命令 CRUD
 ├── auth.go               # TOTP、RSA Token、鉴权中间件
 ├── static/
-│   └── index.html        # Vue 3 单页前端（内嵌）
+│   ├── index.html        # Vue 3 单页前端（内嵌）
+│   └── vue.global.prod.js # Vue 3 生产版运行时（内嵌，不依赖 unpkg）
 └── synopkg/
     ├── INFO              # 套件元数据
     ├── build.sh          # 打包脚本
@@ -43,8 +46,10 @@ runcmd/
     │   ├── privilege     # 运行用户配置
     │   └── resource      # DSM 资源声明
     ├── scripts/
-    │   ├── postinst      # 安装后：生成 SSH 密钥、创建 return/ 目录、设置权限
+    │   ├── postinst      # 安装后：生成 SSH 密钥、创建 return/ 和 ip/ 目录
     │   ├── preinst       # 安装前：创建 runcmd 用户
+    │   ├── preupgrade    # 升级前钩子（DSM 升级校验必需）
+    │   ├── postupgrade   # 升级后钩子（DSM 升级校验必需）
     │   ├── preuninst     # 卸载前：停止进程
     │   └── start-stop-status
     ├── nginx/
@@ -74,7 +79,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o runcmd_linux .
 ```bash
 cd synopkg
 bash build.sh
-# 输出：synopkg/dist/runcmd-1.0.0-0001.spk
+# 输出：synopkg/dist/runcmd-1.0.0-0004.spk（以 INFO 中 version 为准）
 ```
 
 ### 3. 安装到群晖
@@ -82,6 +87,8 @@ bash build.sh
 套件中心 → **手动安装** → 上传 `.spk` 文件。
 
 安装完成后服务监听 `0.0.0.0:38083`。
+
+从已安装版本直接升级时，新包的 `INFO` 版本号必须高于当前版本，并且必须包含可执行的 `scripts/preupgrade` 和 `scripts/postupgrade`。当前构建版本为 `1.0.0-0004`；`build.sh` 会直接读取 `INFO` 中的版本号作为输出文件名，发布新版本时只需修改 `INFO`。
 
 ---
 
@@ -141,7 +148,7 @@ location /webman/3rdparty/runcmd/ {
 
 ## API 接口
 
-所有接口均通过 `X-Token` 请求头携带 Token 进行鉴权（登录和状态查询除外）。
+需要鉴权的接口通过 `X-Token` 请求头携带 Token。认证接口、文件服务和主机上报/列表接口无需鉴权。
 
 ### 认证
 
@@ -169,6 +176,45 @@ location /webman/3rdparty/runcmd/ {
 |---|---|---|---|
 | GET | `/api/pubkey` | 是 | 获取 SSH RSA 公钥内容 |
 | GET | `/api/file?file=文件名` | 否 | 服务 `var/return/` 目录中的文件 |
+| GET | `/api/host/report?hostname=主机名&local_ip=IP1,IP2` | 否 | 上报主机名、局域网 IP，并自动获取客户端外网 IP |
+| GET | `/api/hosts` | 否 | 返回所有主机记录文件名，按修改时间倒序排列 |
+
+Vue 运行时由 Go 二进制内嵌并通过无扩展名路径 `/vue-runtime` 提供，响应类型仍为 `text/javascript`。群晖 DSM nginx 会优先拦截 `/webman/3rdparty/.../*.js` 和 `static/` 静态资源路径并返回自身的 404，使用无扩展名路由可确保请求进入套件的 Go 反向代理。
+
+### 主机 IP 上报
+
+上报示例：
+
+```bash
+curl "http://nas:38083/api/host/report?hostname=office-nas&local_ip=192.168.1.10,10.0.0.10"
+```
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "filename": "office-nas-203.0.113.10-192.168.1.10-10.0.0.10"
+}
+```
+
+处理规则：
+
+- `hostname` 必填，遵循标准 hostname 标签规则，只允许字母、数字、连字符和点；禁止路径字符、连续点、空标签及超过长度限制的标签。
+- `local_ip` 必填，多个 IP 使用英文逗号分隔；支持 IPv4/IPv6、自动去重，单次最多 32 个。
+- 外网 IP 优先从群晖反向代理传递的 `X-Forwarded-For` 获取，其次读取 `X-Real-IP` 和 TCP 客户端地址；所有候选值均需通过 IP 格式校验。
+- 记录保存在 `/var/packages/runcmd/var/ip/`，文件名格式为 `hostname-外网IP-局域网IP1-局域网IP2...`。
+- 每次上报先删除相同 `hostname-` 开头的旧文件，再创建或刷新当前文件，确保同一 hostname 只保留一条记录。
+- 每次成功上报后自动删除修改时间超过 30 天的记录。
+- 写入及列表读取使用互斥锁保护，避免并发上报产生同 hostname 的重复文件。
+
+获取列表：
+
+```bash
+curl http://nas:38083/api/hosts
+```
+
+响应为按修改时间从新到旧排列的文件名数组。登录页面后也可点击顶部「主机」按钮，以“主机 / 外网 IP / 局域网 IP”三列查看。
 
 ---
 
@@ -279,6 +325,7 @@ setuid 防护：
 | `/var/packages/runcmd/var/runcmd.db` | 640 | SQLite 数据库（命令数据） |
 | `/var/packages/runcmd/var/totp_secret` | 600 | TOTP Base32 密钥 |
 | `/var/packages/runcmd/var/return/` | 750 | 文件服务目录，放入后可通过 `/api/file?file=` 访问 |
+| `/var/packages/runcmd/var/ip/` | 750 | 主机 IP 上报记录；安装/升级时自动创建，超过 30 天的记录自动清理 |
 | `/var/packages/runcmd/var/.ssh/id_rsa` | 600 | SSH RSA 私钥 |
 | `/var/packages/runcmd/var/.ssh/id_rsa.pub` | 644 | SSH RSA 公钥 |
 | `/var/packages/runcmd/var/wol` | 755 | WoL 工具二进制 |

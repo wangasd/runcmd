@@ -1,0 +1,9 @@
+#!/bin/sh
+# Persistent data remains under /var/packages/runcmd/var. Ensure directories
+# introduced by newer releases also exist when upgrading an installed package.
+IP_DIR="/var/packages/runcmd/var/ip"
+mkdir -p "${IP_DIR}"
+chown "runcmd:runcmd" "${IP_DIR}"
+chmod 750 "${IP_DIR}"
+
+exit 0

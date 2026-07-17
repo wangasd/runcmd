@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>RunCmd</title>
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="vue-runtime"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#222;font-size:15px}
@@ -139,6 +139,7 @@ th:last-child,td:last-child{width:36%}
   <h1>⚡ RunCmd</h1>
 
   <div class="bar">
+    <button class="d" @click="openHosts">🖥 主机</button>
     <button class="d" @click="load">⟳ 刷新</button>
     <button class="p" @click="openAdd">＋ 添加</button>
     <button :class="showDel2 ? 'r' : 'd'" @click="showDel2=!showDel2">🗑 删除</button>
@@ -275,6 +276,25 @@ th:last-child,td:last-child{width:36%}
     <div class="btns">
       <button class="d" @click="showPubkey=false">关闭</button>
     </div>
+  </div>
+</div>
+
+<!-- ── 主机 IP ──────────────────────────────────────────────────── -->
+<div class="ov" v-if="showHosts">
+  <div class="dlg" style="max-width:760px">
+    <h3>主机列表</h3>
+    <div class="card" style="box-shadow:none;margin:0">
+      <table>
+        <thead><tr><th>主机</th><th>外网 IP</th><th>局域网 IP</th></tr></thead>
+        <tbody>
+          <tr v-if="!hosts.length"><td colspan="3" class="empty">暂无主机上报记录</td></tr>
+          <tr v-for="(host, i) in hosts" :key="i">
+            <td>{{ host.hostname }}</td><td>{{ host.externalIP }}</td><td>{{ host.localIPs }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="btns"><button class="d" @click="showHosts=false">关闭</button></div>
   </div>
 </div>
 
@@ -464,6 +484,8 @@ createApp({
     const showResult = ref(false)
     const showPubkey = ref(false)
     const pubkey     = ref('')
+    const showHosts  = ref(false)
+    const hosts      = ref([])
 
     const form    = reactive({ id:0, name:'', cmd_template:'', list1:'', list2:'' })
     const delItem = ref(null)
@@ -580,6 +602,35 @@ createApp({
       } catch (e) { if (!e.isAuth) alert('请求失败') }
     }
 
+    function formatHostFilename(filename) {
+      const parts = filename.split('-')
+      const isIP = value => {
+        if (value.includes(':')) return /^[0-9a-f:]+$/i.test(value)
+        const octets = value.split('.')
+        return octets.length === 4 && octets.every(v => /^\d{1,3}$/.test(v) && Number(v) <= 255)
+      }
+      // hostname may contain '-', so locate the first normalized IP token instead.
+      const ipIndex = parts.findIndex(isIP)
+      if (ipIndex < 1 || ipIndex === parts.length - 1) {
+        return { hostname: filename, externalIP: '-', localIPs: '-' }
+      }
+      return {
+        hostname: parts.slice(0, ipIndex).join('-'),
+        externalIP: parts[ipIndex],
+        localIPs: parts.slice(ipIndex + 1).join(', ')
+      }
+    }
+
+    async function openHosts() {
+      try {
+        const r = await fetch(API + '/hosts')
+        const data = await r.json()
+        if (!r.ok) { alert(data.error || '获取主机列表失败'); return }
+        hosts.value = data.map(formatHostFilename)
+        showHosts.value = true
+      } catch { alert('获取主机列表失败') }
+    }
+
     // ─── 启动 ─────────────────────────────────────────
     onMounted(() => init())
 
@@ -593,10 +644,11 @@ createApp({
       onCodeInput, doLogin, doLogout,
       // main
       list, showForm, showDel, showDel2, showRun, showResult, showPubkey, pubkey,
+      showHosts, hosts,
       form, delItem, runItem, sel1, sel2, rList1, rList2,
       previewCmd, result, delCD, runCD,
       load, openAdd, openEdit, submitForm,
-      openDel, doDel, openRun, doRun, openPubkey
+      openDel, doDel, openRun, doRun, openPubkey, openHosts
     }
   }
 }).mount('#app')

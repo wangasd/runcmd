@@ -1,5 +1,5 @@
 package="runcmd"
-version="1.0.0-0001"
+version="1.0.0-0004"
 os_min_ver="7.0-40000"
 firmware="7.0"
 description="RunCmd - Shell命令Web管理工具"
